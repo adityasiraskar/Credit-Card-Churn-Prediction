@@ -3,12 +3,20 @@ preprocessing.py
 
 Single source of truth for cleaning / transforming the raw BankChurners data.
 Used by:
-  - notebooks/02_preprocessing.ipynb (training time, on the full raw CSV)
-  - scripts/build_artifacts.py (fits & saves the scalers/encoders)
+  - notebooks/01_churn_pipeline.ipynb (training time, no-SMOTE pipeline)
+  - notebooks/02_churn_pipeline_using_smote.ipynb (training time, SMOTE pipeline)
+  - scripts/build_artifacts.py (fits & saves the encoders)
   - app/streamlit_app.py (inference time, on raw customer input)
 
 Keeping this logic in one place guarantees the Streamlit app preprocesses
 new customers exactly the same way the model was trained.
+
+This mirrors exactly what the training notebooks do to the raw data:
+  1. Drop CLIENTNUM and Kaggle's auto-generated Naive-Bayes helper columns.
+  2. Map Attrition_Flag -> 1 (Attrited Customer) / 0 (Existing Customer).
+  3. Label-encode the remaining categorical (object-dtype) columns.
+  4. Leave every numeric column untouched. The notebooks do not scale or
+     normalize any feature, so no StandardScaler/MinMaxScaler is used here.
 """
 
 from __future__ import annotations
@@ -18,30 +26,21 @@ from collections.abc import Sequence
 
 import joblib
 import pandas as pd
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, LabelEncoder
+from sklearn.preprocessing import LabelEncoder
 
 # ----------------------------------------------------------------------
-# Column groups (must match Table 2 of the reference paper / notebook 02)
+# Column groups (must match notebooks/01_churn_pipeline.ipynb)
 # ----------------------------------------------------------------------
 ID_COLS = ['CLIENTNUM']
 TARGET_COL = 'Attrition_Flag'
+TARGET_MAPPING = {'Attrited Customer': 1, 'Existing Customer': 0}
 
-BINARY_CAT_COLS = ['Gender']
-ONEHOT_COLS = ['Education_Level', 'Marital_Status', 'Income_Category', 'Card_Category']
-
-STANDARDIZE_COLS = ['Customer_Age', 'Months_on_book']
-NORMALIZE_COLS = ['Credit_Limit', 'Total_Revolving_Bal', 'Avg_Open_To_Buy',
-                   'Total_Trans_Amt', 'Total_Trans_Ct']
-
-UNCHANGED_COLS = [
-    'Dependent_count', 'Total_Relationship_Count', 'Months_Inactive_12_mon',
-    'Contacts_Count_12_mon', 'Total_Amt_Chng_Q4_Q1', 'Total_Ct_Chng_Q4_Q1',
-    'Avg_Utilization_Ratio'
+# Every remaining object-dtype column after the target mapping is
+# label-encoded in the notebooks (Gender, Education_Level, Marital_Status,
+# Income_Category, Card_Category).
+CATEGORICAL_COLS = [
+    'Gender', 'Education_Level', 'Marital_Status', 'Income_Category', 'Card_Category'
 ]
-
-RAW_FEATURE_COLS = (
-    BINARY_CAT_COLS + ONEHOT_COLS + STANDARDIZE_COLS + NORMALIZE_COLS + UNCHANGED_COLS
-)
 
 
 def drop_unused_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -51,20 +50,12 @@ def drop_unused_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=cols_to_drop)
 
 
-def clean_categoricals(df: pd.DataFrame) -> pd.DataFrame:
-    """Replace Divorced->Single and College->Graduate, as specified in the paper."""
+def encode_target(df: pd.DataFrame) -> pd.DataFrame:
+    """Map Attrition_Flag -> 1 (Attrited Customer) / 0 (Existing Customer)."""
     df = df.copy()
-    if 'Marital_Status' in df.columns:
-        df['Marital_Status'] = df['Marital_Status'].replace('Divorced', 'Single')
-    if 'Education_Level' in df.columns:
-        df['Education_Level'] = df['Education_Level'].replace('College', 'Graduate')
+    if TARGET_COL in df.columns:
+        df[TARGET_COL] = df[TARGET_COL].replace(TARGET_MAPPING)
     return df
-
-
-def drop_unknown_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove rows containing the literal string 'Unknown' in any column."""
-    mask = (df == 'Unknown').any(axis=1)
-    return df[~mask].reset_index(drop=True)
 
 
 class ChurnPreprocessor:
@@ -75,10 +66,12 @@ class ChurnPreprocessor:
     """
 
     def __init__(self, feature_columns: Sequence[str] | None = None):
-        self.gender_encoder: LabelEncoder | None = None
-        self.std_scaler: StandardScaler | None = None
-        self.norm_scaler: MinMaxScaler | None = None
-        self.onehot_categories: dict[str, list[str]] = {}
+        # One LabelEncoder per categorical column, fit at training time
+        self.label_encoders: dict[str, LabelEncoder] = {}
+        # category -> code lookup derived from each LabelEncoder's classes_,
+        # used at transform time so an unseen category at inference doesn't
+        # raise (LabelEncoder.transform would raise a ValueError instead).
+        self.label_maps: dict[str, dict[str, int]] = {}
         self.final_feature_columns: list[str] = list(feature_columns or [])
 
     # ------------------------------------------------------------------
@@ -86,25 +79,22 @@ class ChurnPreprocessor:
     # ------------------------------------------------------------------
     def fit(self, raw_df: pd.DataFrame) -> "ChurnPreprocessor":
         df = drop_unused_columns(raw_df)
-        df = clean_categoricals(df)
-        df = drop_unknown_rows(df)
+        df = encode_target(df)
 
-        # Gender label encoding
-        self.gender_encoder = LabelEncoder()
-        self.gender_encoder.fit(df['Gender'])
+        categorical_cols = [c for c in CATEGORICAL_COLS if c in df.columns]
 
-        # Remember the categories seen for each one-hot column (fixes column order/leakage)
-        for col in ONEHOT_COLS:
-            self.onehot_categories[col] = sorted(df[col].unique().tolist())
-
-        # Fit scalers
-        self.std_scaler = StandardScaler().fit(df[STANDARDIZE_COLS])
-        self.norm_scaler = MinMaxScaler().fit(df[NORMALIZE_COLS])
+        for col in categorical_cols:
+            encoder = LabelEncoder()
+            encoder.fit(df[col])
+            self.label_encoders[col] = encoder
+            self.label_maps[col] = {
+                category: int(code) for code, category in enumerate(encoder.classes_)
+            }
 
         # Build the transformed dataframe once to lock in column order.
         # When a trained model already saved its input columns, use those as
         # the serving contract so inference matches the model exactly.
-        transformed = self._transform_core(df, is_training=True)
+        transformed = self._transform_core(df)
         if self.final_feature_columns:
             missing_cols = [
                 c for c in self.final_feature_columns
@@ -123,27 +113,12 @@ class ChurnPreprocessor:
     # ------------------------------------------------------------------
     # Internal shared transform logic
     # ------------------------------------------------------------------
-    def _transform_core(self, df: pd.DataFrame, is_training: bool) -> pd.DataFrame:
+    def _transform_core(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-
-        df['Gender'] = self.gender_encoder.transform(df['Gender'])
-
-        if TARGET_COL in df.columns:
-            le_target = LabelEncoder()
-            # Existing Customer / Attrited Customer -> we want churn = 1
-            df[TARGET_COL] = df[TARGET_COL].apply(
-                lambda v: 1 if v == 'Attrited Customer' else 0
-            )
-
-        # One-hot encode using the categories seen at fit time (consistent columns)
-        for col in ONEHOT_COLS:
-            for category in self.onehot_categories[col]:
-                df[f'{col}_{category}'] = (df[col] == category).astype(int)
-        df = df.drop(columns=ONEHOT_COLS)
-
-        df[STANDARDIZE_COLS] = self.std_scaler.transform(df[STANDARDIZE_COLS])
-        df[NORMALIZE_COLS] = self.norm_scaler.transform(df[NORMALIZE_COLS])
-
+        for col, mapping in self.label_maps.items():
+            if col in df.columns:
+                # Unseen categories at inference fall back to -1 instead of raising
+                df[col] = df[col].map(mapping).fillna(-1).astype(int)
         return df
 
     # ------------------------------------------------------------------
@@ -153,18 +128,18 @@ class ChurnPreprocessor:
         """
         Transforms raw input (single row or full dataframe) into the exact
         feature matrix the model expects (same columns, same order).
-        Missing one-hot columns are filled with 0; target column is dropped if present.
+        Missing columns are filled with 0; target column is dropped if present.
         """
         df = raw_df.copy()
 
-        # Only drop unused/unknown-row logic when target/CLIENTNUM are present
-        # (at inference time there is no CLIENTNUM and no 'Unknown' filtering needed)
-        if any(c in df.columns for c in ID_COLS):
+        # Only drop ID/helper columns when they're actually present
+        # (at inference time there is typically no CLIENTNUM column)
+        if any(c in df.columns for c in ID_COLS) or any('Naive_Bayes' in c for c in df.columns):
             df = drop_unused_columns(df)
 
-        df = clean_categoricals(df)
+        df = encode_target(df)
 
-        transformed = self._transform_core(df, is_training=False)
+        transformed = self._transform_core(df)
 
         # Ensure all expected columns exist, in the right order
         for col in self.final_feature_columns:

@@ -1,6 +1,0 @@
-Dataset,Model,Accuracy,Precision,Recall,F1_Score
-Original,KNN,85.79,53.09,82.34,64.55
-Original,LR,84.75,50.94,80.84,62.5
-Original,DT,92.14,70.72,85.33,77.34
-Original,RF,95.11,82.12,88.02,84.97
-Original,SVM,90.87,66.28,85.33,74.61

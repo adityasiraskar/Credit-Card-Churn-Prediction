@@ -23,8 +23,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.preprocessing import ChurnPreprocessor  # noqa: E402
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), '..')
-MODELS_DIR = os.path.join(BASE_DIR, 'models', 'saved_models')
+MODELS_DIR = os.path.join(BASE_DIR, 'models')
 PREPROCESSOR_PATH = os.path.join(MODELS_DIR, 'preprocessor.pkl')
+
+# Champion model from notebooks/01_churn_pipeline.ipynb and
+# notebooks/02_churn_pipeline_using_smote.ipynb: XGBoost trained without
+# SMOTE gave the best precision/F1 trade-off (95% churn precision, 91%
+# churn F1-score, 97% accuracy, 14 false positives). The notebook saves
+# each model as "{name}_model.pkl" directly under models/ — matching the
+# "XGBoost" key in its models dict — so the file is models/XGBoost_model.pkl.
+CHAMPION_MODEL_NAME = "XGBoost"
 
 st.set_page_config(
     page_title="Customer Churn Predictor",
@@ -38,13 +46,18 @@ st.set_page_config(
 # ----------------------------------------------------------------------
 @st.cache_resource
 def load_model_and_preprocessor():
-    model_matches = glob.glob(os.path.join(MODELS_DIR, "best_model_*.pkl"))
-    if not model_matches:
-        return None, None, None
+    champion_path = os.path.join(MODELS_DIR, f"{CHAMPION_MODEL_NAME}_model.pkl")
 
-    model_path = max(model_matches, key=os.path.getmtime)
+    if os.path.exists(champion_path):
+        model_path = champion_path
+    else:
+        model_matches = glob.glob(os.path.join(MODELS_DIR, "*_model.pkl"))
+        if not model_matches:
+            return None, None, None
+        model_path = max(model_matches, key=os.path.getmtime)
+
     model = joblib.load(model_path)
-    model_name = os.path.basename(model_path).replace("best_model_", "").replace(".pkl", "")
+    model_name = os.path.basename(model_path).replace("_model.pkl", "")
 
     if not os.path.exists(PREPROCESSOR_PATH):
         return model, model_name, None
@@ -119,8 +132,8 @@ st.caption(
 
 if model is None:
     st.error(
-        "⚠️ No trained model found in `models/saved_models/`. "
-        "Run `notebooks/04_modeling.ipynb` first to train and save a model."
+        "⚠️ No trained model found in `models/`. "
+        "Run `notebooks/01_churn_pipeline.ipynb` first to train and save a model."
     )
     st.stop()
 
@@ -329,14 +342,18 @@ banking sector, inspired by:
 1. **EDA** — explored distributions, target imbalance, correlations
 2. **Preprocessing** — cleaned unknowns, encoded categoricals, scaled numeric features
 3. **Customer Segmentation** — K-Means clustering (k=6, chosen via the elbow method)
-4. **Modeling** — SMOTE balancing + 5 classifiers (KNN, Logistic Regression, Decision
-   Tree, Random Forest, SVM), evaluated with and without segmentation
+4. **Modeling** — 8 classifiers (Logistic Regression, Naive Bayes, Decision Tree,
+   Random Forest, AdaBoost, Gradient Boosting, XGBoost, LightGBM), evaluated with
+   and without SMOTE oversampling, all runs tracked in MLflow
+   (`notebooks/01_churn_pipeline.ipynb` and `notebooks/02_churn_pipeline_using_smote.ipynb`)
 5. **Deployment** — this Streamlit app, using the exact same preprocessing logic as
    training (`src/preprocessing.py`)
 
-**Key finding (matching the original paper):** customer segmentation does **not**
-consistently improve churn prediction accuracy — model choice matters more than
-segmentation. **Random Forest** was the best-performing model overall.
+**Key finding:** across all eight classifiers, **XGBoost without SMOTE** gave the
+best overall trade-off — 95% churn precision, 91% churn F1-score, 97% accuracy, and
+only 14 false positives. LightGBM with SMOTE reached higher churn recall (91%) but
+with more false positives, making it a reasonable alternative when missing a
+churner is costlier than a false alarm.
 
 **Tech stack:** Python, pandas, scikit-learn, imbalanced-learn, and Streamlit.
         """

@@ -1,25 +1,21 @@
 # Customer Churn Prediction in the Banking Sector
 
 An end-to-end machine learning project for predicting credit card customer churn in
-the banking sector. The project includes exploratory analysis, preprocessing,
-customer segmentation, model training, model comparison, and an interactive
-Streamlit prediction app.
-
-The workflow is inspired by:
-
-Tran, H., Le, N., & Nguyen, V.-H. (2023). Customer churn prediction in the
-banking sector using machine learning-based classification models.
-Interdisciplinary Journal of Information, Knowledge, and Management, 18, 87-105.
-https://doi.org/10.28945/5086
+the banking sector. The project includes exploratory analysis, preprocessing, model
+training with MLflow tracking, model comparison, and an interactive Streamlit
+prediction app.
+=
 
 ## Project Goals
 
 This project answers two practical questions:
 
 1. Which machine learning model predicts bank customer churn best?
-2. Does customer segmentation with K-Means improve churn prediction performance?
+2. Does SMOTE oversampling of the minority (churn) class improve prediction
+   performance, and what does it trade off against precision?
 
-The current saved app artifacts serve a Random Forest model.
+The current saved app artifacts serve an **XGBoost model trained without SMOTE**
+(see [Model Training Summary](#model-training-summary)).
 
 ## Dataset
 
@@ -48,13 +44,12 @@ Customer-Churn-Prediction/
 |   |-- raw/
 |   `-- processed/
 |-- models/
-|   `-- saved_models/
+|   |-- <ModelName>_model.pkl      (one per model, saved by notebook 01)
+|   `-- preprocessor.pkl           (built by scripts/build_artifacts.py)
 |-- notebooks/
-|   |-- 01_eda.ipynb
-|   |-- 02_preprocessing.ipynb
-|   |-- 03_clustering.ipynb
-|   |-- 04_modeling.ipynb
-|   `-- 05_results_comparison.ipynb
+|   |-- 01_churn_pipeline.ipynb              (8 classifiers, no SMOTE)
+|   |-- 02_churn_pipeline_using_smote.ipynb  (same 8 classifiers, with SMOTE)
+|   `-- mlflow.db                            (local MLflow tracking store, gitignored)
 |-- outputs/
 |   `-- metrics/
 |-- scripts/
@@ -161,18 +156,28 @@ jupyter notebook
 3. Run notebooks in this order:
 
 ```text
-notebooks/01_eda.ipynb
-notebooks/02_preprocessing.ipynb
-notebooks/03_clustering.ipynb
-notebooks/04_modeling.ipynb
-notebooks/05_results_comparison.ipynb
+notebooks/01_churn_pipeline.ipynb
+notebooks/02_churn_pipeline_using_smote.ipynb
 ```
+
+Notebook 01 trains and saves each model as `models/<ModelName>_model.pkl`
+(e.g. `models/XGBoost_model.pkl`) and writes
+`outputs/metrics/model_report_without_smote.csv`. Notebook 02 repeats the
+same 8 classifiers on SMOTE-resampled training data and writes
+`outputs/metrics/model_report_with_smote.csv`. Both notebooks log every
+run's params, metrics, figures, and models to a local MLflow store at
+`notebooks/mlflow.db`.
 
 4. Rebuild the serving preprocessor after training:
 
 ```powershell
 python scripts\build_artifacts.py
 ```
+
+This fits `src/preprocessing.py`'s `ChurnPreprocessor` on the raw CSV and
+aligns its output columns with the champion model's own `feature_names_in_`
+(read directly from `models/XGBoost_model.pkl` — there is no separate
+feature-columns file).
 
 5. Verify and run the app:
 
@@ -181,34 +186,67 @@ pytest
 streamlit run app\streamlit_app.py
 ```
 
+## MLflow Tracking
+
+Both training notebooks log to a local SQLite-backed MLflow store at
+`notebooks/mlflow.db`, under two experiments:
+
+- `churn_prediction_experiment_without_smote`
+- `churn_prediction_experiment_with_smote`
+
+To browse runs, params, metrics, and logged artifacts (ROC curves, confusion
+matrices, classification reports, models):
+
+```powershell
+cd notebooks
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+
+Then open http://127.0.0.1:5000. The `mlflow ui` command must be run from the
+`notebooks/` folder (or point at the same `mlflow.db` path the notebooks use),
+otherwise it will open an empty store.
+
 ## What the App Uses
 
 The Streamlit app loads:
 
 ```text
-models/saved_models/best_model_*.pkl
-models/saved_models/preprocessor.pkl
-models/saved_models/feature_columns.pkl
+models/XGBoost_model.pkl
+models/preprocessor.pkl
 ```
 
-`scripts/build_artifacts.py` fits the shared preprocessor in
-`src/preprocessing.py` and aligns it with `feature_columns.pkl`, so the app
-serves the exact feature shape expected by the trained model.
+`app/streamlit_app.py` looks for `models/XGBoost_model.pkl` first (the
+champion model — see [Model Training Summary](#model-training-summary)) and
+only falls back to the most recently modified `models/*_model.pkl` if that
+file is missing. `scripts/build_artifacts.py` fits the shared preprocessor in
+`src/preprocessing.py` and aligns its feature order with the champion model's
+`feature_names_in_`, so the app serves the exact feature shape the model
+expects. There is no separate `feature_columns.pkl` — the notebooks never
+produce one.
 
 ## Model Training Summary
 
-The project compares:
+Both notebooks train the same 8 classifiers:
 
 | Model | Name |
 |---|---|
-| KNN | K-Nearest Neighbors |
 | LR | Logistic Regression |
-| DT | Decision Tree |
+| NB | Naive Bayes |
+| DT | Decision Tree Classifier |
 | RF | Random Forest |
-| SVM | Support Vector Machine |
+| AB | AdaBoost |
+| GB | Gradient Boosting |
+| XGB | XGBoost |
+| LGBM | LightGBM |
 
-The workflow applies SMOTE only to the training split to avoid test data
-leakage. Results are compared with and without K-Means segmentation.
+Notebook 01 trains on the original (imbalanced) training split. Notebook 02
+applies SMOTENC to the training split only (never to the test split, to avoid
+leakage) and retrains the same 8 classifiers.
+
+**Champion model: XGBoost without SMOTE** — 95% churn precision, 91% churn
+F1-score, 97% accuracy, 14 false positives. **LightGBM with SMOTE** is a
+reasonable alternative when missing a churner is costlier than a false
+alarm, reaching 91% churn recall at the cost of more false positives.
 
 ## Useful Commands
 

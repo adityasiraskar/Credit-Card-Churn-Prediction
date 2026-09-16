@@ -10,6 +10,10 @@ imbalanced-learn
 yellowbrick
 joblib
 mlflow
+statsmodels
+tqdm
+xgboost
+lightgbm
 
 # --- Notebook tooling ---
 jupyter

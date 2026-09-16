@@ -2,8 +2,11 @@
 data/raw/*.csv
 data/processed/*.csv
 
-# Models and generated artifacts
-models/saved_models/*.pkl
+# Models
+models/*.pkl
+models/*.joblib
+
+# MLflow
 mlruns/
 **/mlruns/
 mlflow.db
@@ -12,7 +15,6 @@ mlflow.db
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 .pytest_cache/
 .ipynb_checkpoints/
 
@@ -25,6 +27,6 @@ venv/
 .env
 .env.*
 
-# OS/editor clutter
+# OS / editor
 .DS_Store
 Thumbs.db
