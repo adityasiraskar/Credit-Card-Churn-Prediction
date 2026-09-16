@@ -1,4 +1,4 @@
-# Customer Churn Prediction in the Banking Sector
+# Customer Churn Prediction in the Banking Sector.
 
 An end-to-end machine learning project for predicting credit card customer churn in
 the banking sector. The project includes exploratory analysis, preprocessing, model
