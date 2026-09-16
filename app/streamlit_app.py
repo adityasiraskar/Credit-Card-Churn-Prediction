@@ -125,10 +125,6 @@ def predict_one(customer: dict) -> dict:
 # Header
 # ----------------------------------------------------------------------
 st.title("🏦 Customer Churn Predictor")
-st.caption(
-    "Based on *Customer Churn Prediction in the Banking Sector Using Machine "
-    "Learning-Based Classification Models* (Tran, Le & Nguyen, 2023, IJIKM Vol. 18)"
-)
 
 if model is None:
     st.error(
@@ -331,12 +327,6 @@ with tab3:
     st.subheader("About This Project")
     st.markdown(
         """
-This demo is part of an end-to-end **Customer Churn Prediction** project for the
-banking sector, inspired by:
-
-> Tran, H., Le, N., & Nguyen, V.-H. (2023). *Customer churn prediction in the banking
-> sector using machine learning-based classification models.* Interdisciplinary Journal
-> of Information, Knowledge, and Management, 18, 87-105.
 
 **Pipeline:**
 1. **EDA** — explored distributions, target imbalance, correlations
