@@ -47,7 +47,7 @@ Customer-Churn-Prediction/
 |   |-- <ModelName>_model.pkl      (one per model, saved by notebook 01)
 |   `-- preprocessor.pkl           (built by scripts/build_artifacts.py)
 |-- notebooks/
-|   |-- 01_churn_pipeline.ipynb              (8 classifiers, no SMOTE)
+|   |-- 01_churn_pipeline_without_smote.ipynb (8 classifiers, no SMOTE)
 |   |-- 02_churn_pipeline_using_smote.ipynb  (same 8 classifiers, with SMOTE)
 |   `-- mlflow.db                            (local MLflow tracking store, gitignored)
 |-- outputs/
@@ -156,7 +156,7 @@ jupyter notebook
 3. Run notebooks in this order:
 
 ```text
-notebooks/01_churn_pipeline.ipynb
+notebooks/01_churn_pipeline_without_smote.ipynb
 notebooks/02_churn_pipeline_using_smote.ipynb
 ```
 
@@ -225,7 +225,6 @@ expects. There is no separate `feature_columns.pkl` — the notebooks never
 produce one.
 
 ## Model Training Summary
-
 Both notebooks train the same 8 classifiers:
 
 | Model | Name |
