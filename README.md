@@ -3,8 +3,7 @@
 An end-to-end machine learning project for predicting credit card customer churn in
 the banking sector. The project includes exploratory analysis, preprocessing, model
 training with MLflow tracking, model comparison, and an interactive Streamlit
-prediction app.
-=
+prediction app
 
 ## Project Goals
 
